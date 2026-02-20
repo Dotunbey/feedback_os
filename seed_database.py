@@ -102,7 +102,7 @@ def process_and_upload_csv(file_path: str):
 if __name__ == "__main__":
     # Add your .env file with SUPABASE_URL and SUPABASE_SERVICE_KEY
     csv_files = [
-        "Asian_B2B.xlsx - Owners.csv",
+        "contact_data.xlsx - Owners.csv",
         "Asian_B2B.xlsx - Founder.csv"
         # Add the rest of your files here
     ]
