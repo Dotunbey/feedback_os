@@ -108,7 +108,7 @@ def process_and_upload_excel(file_path: str):
 
 if __name__ == "__main__":
     # Point this to your actual Excel file
-    excel_file = "Asian_B2B.xlsx" 
+    excel_file = "contact_data.xlsx" 
     
     if os.path.exists(excel_file):
         process_and_upload_excel(excel_file)
