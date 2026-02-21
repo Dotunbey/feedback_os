@@ -119,3 +119,61 @@ async def search_global_contacts(
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "message": "FeedbackOS Backend is running securely."}
+
+
+
+# --- NEW PYDANTIC MODELS FOR SAVING ---
+
+class SaveContactRequest(BaseModel):
+    user_id: str # In production, we extract this securely from the JWT token
+    contact_id: str
+
+class SaveContactResponse(BaseModel):
+    success: bool
+    message: str
+    workspace_contact_id: Optional[str] = None
+
+# --- THE POST ENDPOINT ---
+
+@app.post("/api/v1/workspaces/contacts", response_model=SaveContactResponse)
+async def save_contact_to_workspace(payload: SaveContactRequest):
+    """
+    Saves a global contact into a specific user's private workspace.
+    """
+    try:
+        # We attempt to insert the relationship into user_contacts
+        response = supabase.table("user_contacts").insert({
+            "user_id": payload.user_id,
+            "contact_id": payload.contact_id
+        }).execute()
+        
+        # If successful, get the newly created ID from the user_contacts table
+        new_id = response.data[0]['id']
+
+        return SaveContactResponse(
+            success=True,
+            message="Contact successfully saved to workspace.",
+            workspace_contact_id=new_id
+        )
+
+    except Exception as e:
+        error_msg = str(e)
+        # Catch the specific PostgreSQL error for our UNIQUE constraint
+        # This prevents the server from crashing if they click "Save" twice
+        if "duplicate key value violates unique constraint" in error_msg:
+            raise HTTPException(
+                status_code=409, # 409 Conflict
+                detail="This contact is already saved in your workspace."
+            )
+        
+        # Handle foreign key errors (e.g., they sent a fake contact_id)
+        if "violates foreign key constraint" in error_msg:
+            raise HTTPException(
+                status_code=400, # 400 Bad Request
+                detail="Invalid user ID or contact ID provided."
+            )
+
+        # Catch-all for other database errors
+        raise HTTPException(status_code=500, detail="Failed to save contact.")
+
+
