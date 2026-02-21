@@ -58,9 +58,12 @@ async def search_global_contacts(
     # Core Fields
     q: Optional[str] = Query(None, description="Search across name, email, or company"),
     
-    # Flexible JSONB Fields (Specific to your B2B data)
-    industry: Optional[str] = Query(None, description="Filter by Industry in JSONB"),
-    country: Optional[str] = Query(None, description="Filter by Company Country in JSONB"),
+    # Flexible JSONB Fields
+    industry: Optional[str] = Query(None, description="Filter by Industry"),
+    country: Optional[str] = Query(None, description="Filter by Company Country"),
+    title: Optional[str] = Query(None, description="Filter by Job Title (e.g., CEO, Owner)"),
+    company_size: Optional[str] = Query(None, description="Filter by exact Company Size"),
+    source_sheet: Optional[str] = Query(None, description="Filter by original Excel sheet (e.g., Owners, Founder)"),
     
     # Pagination
     page: int = Query(1, ge=1, description="Page number"),
@@ -70,35 +73,34 @@ async def search_global_contacts(
     High-performance search endpoint hitting both relational and JSONB data using GIN indexes.
     """
     try:
-        # 1. Base Query: Select all records and ask Postgres for the exact total count
-        query = supabase.table("contacts").select("*", count="exact")
-        
-        # 2. Filter: Only search the Global directory (where owner_id is NULL)
-        query = query.is_("owner_id", "null")
+        query = supabase.table("contacts").select("*", count="exact").is_("owner_id", "null")
 
-        # 3. Handle Core Field Search (The 'q' parameter)
+        # Core Field Search
         if q:
-            # Uses PostgREST's 'or' syntax to search multiple core columns at once
             search_term = f"%{q}%"
             query = query.or_(f"first_name.ilike.{search_term},last_name.ilike.{search_term},company_name.ilike.{search_term},email.ilike.{search_term}")
 
-        # 4. Handle JSONB Flexible Field Search (The Magic Trick)
-        # We use the ->> operator to extract text from the JSONB column for querying
+        # JSONB Flexible Field Searches
         if industry:
             query = query.ilike("custom_data->>Industry", f"%{industry}%")
-        
         if country:
             query = query.ilike("custom_data->>Company Country", f"%{country}%")
+        if title:
+            query = query.ilike("custom_data->>Title", f"%{title}%")
+        if company_size:
+            # We use .eq (exact match) for size, but you could use numeric filters here too if casted!
+            query = query.eq("custom_data->>Company Size", company_size)
+        if source_sheet:
+            query = query.ilike("custom_data->>original_sheet", f"%{source_sheet}%")
 
-        # 5. Apply Pagination
+        # Apply Pagination
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size - 1
         query = query.range(start_idx, end_idx)
 
-        # 6. Execute Query
+        # Execute
         response = query.execute()
 
-        # 7. Calculate Pagination Metadata
         total_count = response.count if response.count else 0
         total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
 
