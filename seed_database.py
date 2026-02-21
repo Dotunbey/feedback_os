@@ -34,16 +34,25 @@ class ContactCreate(BaseModel):
 def seed_database(file_path: str):
     print(f"Loading {file_path} into memory...")
     try:
-        # Load all sheets at once
         sheets_dict = pd.read_excel(file_path, sheet_name=None)
     except Exception as e:
         print(f"Failed to read Excel: {e}")
         return
 
+    # 🚀 NEW: Fetch existing global emails to prevent duplicate crashes
+    print("Fetching existing global contacts from database...")
+    try:
+        # We only need the emails where owner_id is NULL
+        res = supabase.table('contacts').select('email').is_('owner_id', 'null').execute()
+        seen_emails = {row['email'] for row in res.data}
+        print(f"Found {len(seen_emails)} existing contacts.")
+    except Exception as e:
+        print(f"Warning: Could not fetch existing contacts: {e}")
+        seen_emails = set()
+
     for sheet_name, df in sheets_dict.items():
         print(f"\n--- Processing Sheet: '{sheet_name}' ({len(df)} rows) ---")
         
-        # Clean column headers
         df.columns = df.columns.astype(str).str.strip()
         records_to_insert = []
         
@@ -54,37 +63,44 @@ def seed_database(file_path: str):
                 if pd.notna(v) and str(v).strip() != ""
             }
 
-            if not clean_dict.get('Email') or '@' not in str(clean_dict.get('Email')):
-                continue # Skip invalid emails
+            raw_email = clean_dict.get('Email')
+            # Check for valid email AND check if we've already seen it
+            if not raw_email or '@' not in str(raw_email):
+                continue
+            
+            clean_email = str(raw_email).lower()
+            if clean_email in seen_emails:
+                continue # Skip! We already have this email.
                 
             try:
-                # Let Pydantic extract core fields based on AliasChoices
                 contact = ContactCreate(**clean_dict)
                 
-                # Identify remaining flexible fields for JSONB
                 core_aliases = ['First name', 'Last name', 'Company name', 'Company', 'Email', 'LinkedIn']
                 contact.custom_data = {k: v for k, v in clean_dict.items() if k not in core_aliases}
-                
-                # Tag the source sheet inside custom_data for filtering later
                 contact.custom_data['original_sheet'] = sheet_name
                 
                 records_to_insert.append(contact.model_dump(by_alias=False))
+                
+                # 🚀 NEW: Add to our seen list so we don't duplicate within the same Excel file
+                seen_emails.add(clean_email)
+                
             except Exception:
-                pass # Skip rows that fail strict validation
+                pass 
 
         if not records_to_insert:
+            print("No new/valid records to insert in this sheet.")
             continue
 
-        # --- 3. BATCH UPLOAD (Fault Tolerant) ---
+        # --- 3. BATCH INSERT ---
         chunk_size = 500
         for i in range(0, len(records_to_insert), chunk_size):
             chunk = records_to_insert[i:i + chunk_size]
             try:
-                # Upsert prevents crashing on duplicates
-                supabase.table('contacts').upsert(chunk, on_conflict='email').execute()
+                # 🚀 CHANGED: Using .insert() instead of .upsert()
+                supabase.table('contacts').insert(chunk).execute()
                 print(f"  -> Uploaded {min(i + chunk_size, len(records_to_insert))}/{len(records_to_insert)} records...")
             except Exception as e:
                 print(f"  -> Error on chunk {i}: {e}")
 
 if __name__ == "__main__":
-    seed_database("contact_data.xlsx")
+    seed_database("contact_data.xlsx") # Make sure the filename matches!
