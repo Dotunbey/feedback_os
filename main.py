@@ -176,4 +176,31 @@ async def save_contact_to_workspace(payload: SaveContactRequest):
         # Catch-all for other database errors
         raise HTTPException(status_code=500, detail="Failed to save contact.")
 
+# --- GET WORKSPACE CONTACTS ENDPOINT ---
+
+@app.get("/api/v1/workspaces/contacts")
+async def get_workspace_contacts(
+    user_id: str = Query(..., description="The ID of the user requesting their contacts")
+):
+    """
+    Fetches all contacts saved in a specific user's private workspace.
+    Performs an automatic JOIN with the global contacts table.
+    """
+    try:
+        # The magic is in the 'contacts(*)' syntax. 
+        # Because we set up Foreign Keys in our SQL, Supabase automatically does the JOIN!
+        response = supabase.table("user_contacts") \
+            .select("id, override_first_name, override_last_name, custom_data, created_at, contacts(*)") \
+            .eq("user_id", user_id) \
+            .order("created_at", desc=True) \
+            .execute()
+
+        return {
+            "success": True,
+            "total_saved": len(response.data),
+            "data": response.data
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch workspace contacts: {str(e)}")
 
