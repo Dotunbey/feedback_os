@@ -160,30 +160,40 @@ async def save_contact_to_workspace(payload: SaveContactRequest):
         raise HTTPException(status_code=500, detail="Failed to save contact.")
 
 # --- GET WORKSPACE CONTACTS ENDPOINT ---
+class WorkspacePaginatedResponse(BaseModel):
+    data: List[Dict[str, Any]]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
 
-@app.get("/api/v1/workspaces/contacts")
+@app.get("/api/v1/workspaces/contacts", response_model=WorkspacePaginatedResponse)
 async def get_workspace_contacts(
-    user_id: str = Query(..., description="The ID of the user requesting their contacts")
+    # TEMP: In production, this comes from Depends(get_current_user_jwt)
+    user_id: str = Query(..., description="The user ID"), 
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100)
 ):
-    """
-    Fetches all contacts saved in a specific user's private workspace.
-    Performs an automatic JOIN with the global contacts table.
-    """
     try:
-        # The magic is in the 'contacts(*)' syntax. 
-        # Because we set up Foreign Keys in our SQL, Supabase automatically does the JOIN!
-        response = supabase.table("user_contacts") \
-            .select("id, override_first_name, override_last_name, custom_data, created_at, contacts(*)") \
+        # We add count="exact" to the relational query
+        query = supabase.table("user_contacts") \
+            .select("id, override_first_name, override_last_name, custom_data, created_at, contacts(*)", count="exact") \
             .eq("user_id", user_id) \
-            .order("created_at", desc=True) \
-            .execute()
+            .order("created_at", desc=True)
 
-        return {
-            "success": True,
-            "total_saved": len(response.data),
-            "data": response.data
-        }
+        # Apply Pagination
+        start_idx = (page - 1) * page_size
+        query = query.range(start_idx, start_idx + page_size - 1)
 
+        response = query.execute()
+        total_count = response.count if response.count else 0
+
+        return WorkspacePaginatedResponse(
+            data=response.data,
+            total_count=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=math.ceil(total_count / page_size) if total_count > 0 else 0
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch workspace contacts: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=str(e))
